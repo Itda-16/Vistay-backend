@@ -1,0 +1,1620 @@
+{
+  "name": "vistay-document-parse-final",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "upload",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -720,
+        320
+      ],
+      "id": "1783f684-a191-4268-a6ae-36d2d78bc6e4",
+      "name": "Webhook",
+      "webhookId": "7611a6e9-2970-41d7-bf13-38f04eb874d5"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "file_url",
+        "include": "allOtherFields",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        240,
+        320
+      ],
+      "id": "0f5df35e-4023-4a18-b70b-8183cda42a8d",
+      "name": "Split Out"
+    },
+    {
+      "parameters": {
+        "url": "https://dtadlofykptnblrmzzad.supabase.co/rest/v1/visa_requirement?visa_type=eq.D-2",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        240,
+        144
+      ],
+      "id": "a2884689-6c5a-4ee6-bdba-228d34cf3976",
+      "name": "DB Select: VisaRequirement",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OgF9rJgMLuCrdeNY",
+          "name": "Supabase Auth"
+        },
+        "httpCustomAuth": {
+          "id": "DAj3kWD2Pg2JWURL",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://dtadlofykptnblrmzzad.supabase.co/rest/v1/document",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"session_id\": \"{{ $('Merge: UserSession Result').item.json.session_id }}\",\n  \"file_url\": \"{{ $json.file_url }}\",\n  \"status\": \"uploaded\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        416,
+        320
+      ],
+      "id": "be9ca921-ca85-4fe6-b496-7ac04b43f34d",
+      "name": "DB Insert: Document",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OgF9rJgMLuCrdeNY",
+          "name": "Supabase Auth"
+        },
+        "httpCustomAuth": {
+          "id": "DAj3kWD2Pg2JWURL",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://dtadlofykptnblrmzzad.supabase.co/rest/v1/checklist_item",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => {\n  // 1. doc_type 영문 → 한국어 매핑\n  const docTypeMap = {\n    \"passport\": \"여권\",\n    \"academic_certificate\": \"재학증명\",\n    \"financial_statement\": \"재정증명\",\n    \"residence_proof\": \"체류지입증\",\n    \"tb_test\": \"결핵진단서\",\n    \"application_form\": \"통합신청서\",\n    \"photo\": \"표준규격 사진\",\n    \"business_registration\": \"교육기관 사업자등록증\",\n    \"admission_letter\": \"표준입학허가서\",\n    \"family_relations\": \"가족관계 입증서류\",\n    \"professor_confirmation\": \"지도교수 확인서\"\n  };\n  \n  // 2. VisaRequirement에서 한국어 doc_type → UUID 매핑 만들기\n  const visaRequirements = $('DB Select: VisaRequirement').all();\n  const docTypeToReqId = {};\n  for (const req of visaRequirements) {\n    if (req.json && req.json.doc_type) {\n      docTypeToReqId[req.json.doc_type] = req.json.requirement_id;\n    }\n  }\n  \n  // 3. 영문 doc_type → UUID 변환 함수\n  const getReqIdByDocType = (docTypeEn) => {\n    const docTypeKr = docTypeMap[docTypeEn];\n    if (!docTypeKr) return null;\n    return docTypeToReqId[docTypeKr] || null;\n  };\n  \n  // 4. rule_results + Solar items 합치기\n  const ruleResults = $('Transform: Checklist Validation').item.json.rule_results;\n  const solarItems = JSON.parse($('Solar Judgment').item.json.choices[0].message.content).items;\n  \n  // 5. Solar items의 req_id를 UUID로 변환\n  const solarItemsWithUuid = solarItems.map(item => ({\n    ...item,\n    req_id: getReqIdByDocType(item.doc_type),\n    evidence_doc_id: null\n  }));\n  \n  // 6. 합쳐서 ChecklistItem 형식으로 변환\n  const finalArray = [...ruleResults, ...solarItemsWithUuid].map(item => ({\n    session_id: $('Merge: UserSession Result').item.json.session_id,\n    visa_type: $('Webhook').item.json.body.visa_type,\n    doc_type: item.doc_type,\n    req_id: item.req_id || null,\n    status: item.status,\n    decision_by: item.decision_by,\n    reason: item.reason,\n    evidence_doc_id: item.evidence_doc_id || null\n  }));\n  \n  // 7. 빈 배열 처리 — 분석만 한 케이스 (residence_proof, admission_letter 등 룰 없는 서류)\n  if (finalArray.length === 0) {\n    return [{\n      session_id: $('Merge: UserSession Result').item.json.session_id,\n      visa_type: $('Webhook').item.json.body.visa_type,\n      doc_type: $('Transform: Checklist Validation').item.json.extracted_data.document_type || \"other\",\n      req_id: null,\n      status: \"completed\",\n      decision_by: \"rule\",\n      reason: \"서류 분석 완료 (별도 검증 규칙 없음)\",\n      evidence_doc_id: null\n    }];\n  }\n  \n  return finalArray;\n})() }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -592,
+        912
+      ],
+      "id": "f8d92aea-989d-45cf-a358-f2ef8f94f384",
+      "name": "DB Insert: ChecklistItem",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OgF9rJgMLuCrdeNY",
+          "name": "Supabase Auth"
+        },
+        "httpCustomAuth": {
+          "id": "DAj3kWD2Pg2JWURL",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $('Transform: Dashboard Payload').item.json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2064,
+        912
+      ],
+      "id": "cff2e92c-397b-4e17-999f-371f32c01c1e",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -720,
+        464
+      ],
+      "id": "bf3468b3-484d-410d-a44b-699a49ce22ad",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.upstage.ai/v1/document-digitization",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "document-parse"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "document",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        992,
+        144
+      ],
+      "id": "363558f4-5b0c-4d7d-9964-e0218103d879",
+      "name": "Upstage Document Parse",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "smJd9fATVQ6chaig",
+          "name": "Upstage API Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.file_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        624,
+        320
+      ],
+      "id": "cbaf5faf-6108-4558-b67d-4c58e7a63792",
+      "name": "Download Test PDF"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.upstage.ai/v1/information-extraction",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: \"information-extract\",\n  messages: [{\n    role: \"user\",\n    content: [{\n      type: \"image_url\",\n      image_url: {\n        url: $('Webhook').item.json.body.file_url\n      }\n    }]\n  }],\n  response_format: {\n    type: \"json_schema\",\n    json_schema: {\n      name: \"d2_visa_document\",\n      schema: {\n        type: \"object\",\n        properties: {\n          applicant_name: { type: \"string\", description: \"신청자 이름 (한글 또는 영문). 여러 서류에서 교차검증용으로 사용. 없으면 빈 문자열\" },\n          passport_no: { type: \"string\", description: \"여권번호. 없으면 빈 문자열\" },\n          nationality: { type: \"string\", description: \"국적 (예: 중국, 베트남, 미국 등). 결핵검진 필수 35개국 판단에 사용. 없으면 빈 문자열\" },\n          issue_date: { type: \"string\", description: \"서류 발급일. YYYY-MM-DD 형식. 없으면 빈 문자열\" },\n          expiry_date: { type: \"string\", description: \"서류 만료일 또는 여권 만료일. YYYY-MM-DD 형식. 없으면 빈 문자열\" },\n          issuing_authority: { type: \"string\", description: \"발급 기관명 (예: 은행명, 대학교명, 출입국·외국인청 등). 없으면 빈 문자열\" },\n          balance_amount: { type: \"number\", description: \"잔액 금액. 외화면 원본 통화 숫자만. 없으면 0\" },\n          balance_currency: { type: \"string\", description: \"잔액 통화 (KRW, USD, CNY, JPY 등). 없으면 빈 문자열\" },\n          university_name: { type: \"string\", description: \"대학교명. 재학증명서·입학허가서·교차검증용. 없으면 빈 문자열\" },\n          gpa: { type: \"number\", description: \"평점 GPA. 재정능력 입증 면제 판단(2.0 이상)에 사용. 4.0 또는 4.3 만점 기준. 없으면 0\" },\n          gpa_scale: { type: \"number\", description: \"GPA 만점 기준 (4.0 또는 4.3). 없으면 0\" },\n          parent_name: { type: \"string\", description: \"부모 이름. 가족관계 입증 서류에서만 사용. 없으면 빈 문자열\" },\n          address: { type: \"string\", description: \"주소 (체류지 입증서류에서 추출). 없으면 빈 문자열\" },\n          document_type: {\n            type: \"string\",\n            enum: [\"application_form\", \"passport\", \"photo\", \"business_registration\", \"admission_letter\", \"academic_certificate\", \"financial_statement\", \"residence_proof\", \"tb_test\", \"family_relations\", \"professor_confirmation\", \"other\"],\n            description: \"서류 종류 영문 ID. 시드 데이터 doc_type과 일치\"\n          }\n        },\n        required: [\"applicant_name\", \"passport_no\", \"nationality\", \"issue_date\", \"expiry_date\", \"issuing_authority\", \"balance_amount\", \"balance_currency\", \"university_name\", \"gpa\", \"gpa_scale\", \"parent_name\", \"address\", \"document_type\"]\n      }\n    }\n  }\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1200,
+        320
+      ],
+      "id": "55a53045-e472-45d0-bdee-95d30fbe2c5c",
+      "name": "Information Extract",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "smJd9fATVQ6chaig",
+          "name": "Upstage API Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://v2.convertapi.com/convert/pdf/to/png",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "File",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        992,
+        320
+      ],
+      "id": "bc19c946-0031-4278-8cf6-d257a232fbef",
+      "name": "Convert PDF to PNG",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "vS2YPvZcCFT7sPAT",
+          "name": "ConvertAPI Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.upstage.ai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: \"solar-pro\",\n  messages: [\n    {\n      role: \"system\",\n      content: \"당신은 한국 D-2 유학 비자 서류 심사 전문가입니다. 룰 기반 판단이 어려운 애매한 케이스만 판단합니다.\\n\\nD-2 비자 연장 요건:\\n- 재정능력 입증 (financial_statement): 잔액 10,000,000원 이상 (학교별 변동), 발급일 30일 이내\\n- 성적 우수자 (평점 2.0 이상)는 재정능력 입증 면제 가능\\n- 여권 (passport): 만료일 180일 이상 남아야 함\\n- 결핵진단서 (tb_test): 고위험 35개국 출신만 필수\\n\\n당신은 다음 같은 애매한 케이스만 처리합니다:\\n1. 외화 환산 (USD, CNY, JPY 등) - 현재 환율 기준으로 환산해 판단\\n2. 잔액 기준 ±10% 근접 (9,000,000원 ~ 11,000,000원)\\n3. 발급일 30일 경계선 ±5일 (25-35일)\\n4. 여권 만료 기준 180일 ±90일 (90-270일)\\n\\n⚠️ status는 반드시 다음 4가지 중 하나여야 합니다:\\n- \\\"completed\\\": 모든 조건을 명확히 충족함\\n- \\\"missing\\\": 서류 자체가 없거나 식별 불가\\n- \\\"invalid\\\": 서류는 있는데 조건 불충족 (잔액 부족, 발급일 초과, 만료됨 등)\\n- \\\"warning\\\": 사람이 한 번 더 확인이 필요한 경계선/애매한 케이스\\n당신이 받는 케이스는 대부분 \\\"warning\\\" 또는 환산 결과에 따라 \\\"completed\\\"/\\\"invalid\\\"로 명확히 결정됩니다. 절대 위 4가지 외의 status 값을 만들지 마세요.\\n\\n각 항목의 doc_type은 반드시 다음 enum 중 하나여야 합니다: application_form, passport, photo, business_registration, admission_letter, academic_certificate, financial_statement, residence_proof, tb_test, family_relations, professor_confirmation, other\\n\\n⚠️ 절대 enum 밖의 doc_type을 만들지 마세요. 잘못된 예시 → 올바른 매핑:\\n- enrollment_verification → academic_certificate\\n- tuberculosis_test → tb_test\\n- residence_verification → residence_proof\\n\\n만약 애매한 케이스 목록이 비어있다면 ([]), items 배열도 비어있는 응답을 반환하세요: {\\\"items\\\": []}\\n\\n응답은 반드시 JSON 형식으로만, 다른 설명 없이 출력하세요.\"\n    },\n    {\n      role: \"user\",\n      content: \"추출된 서류 정보:\\n\" + $('Information Extract').item.json.choices[0].message.content + \"\\n\\n룰 기반 판단으로 결정 못한 애매한 케이스 목록:\\n\" + JSON.stringify($('Transform: Checklist Validation').item.json.ambiguous_items) + \"\\n\\n위 애매한 케이스만 판단하고, 다음 JSON 형식으로만 응답하세요:\\n\\n{\\n  \\\"items\\\": [\\n    {\\n      \\\"req_id\\\": \\\"요건_id\\\",\\n      \\\"doc_type\\\": \\\"서류_종류_영문ID\\\",\\n      \\\"status\\\": \\\"completed|missing|invalid|warning\\\",\\n      \\\"decision_by\\\": \\\"solar\\\",\\n      \\\"reason\\\": \\\"판단 사유 (환율 환산 결과 등 포함)\\\",\\n      \\\"evidence_doc_id\\\": \\\"근거_문서_id\\\"\\n    }\\n  ]\\n}\"\n    }\n  ],\n  response_format: { type: \"json_object\" },\n  temperature: 0.1\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        704,
+        656
+      ],
+      "id": "f31b8e8d-f390-43ab-9fde-131faa9e0f45",
+      "name": "Solar Judgment",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "smJd9fATVQ6chaig",
+          "name": "Upstage API Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.upstage.ai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: \"solar-pro\",\n  messages: [\n    {\n      role: \"system\",\n      content: \"당신은 한국 D-2 비자 서류 준비를 돕는 친근한 안내자입니다. 외국인 유학생도 쉽게 이해할 수 있도록 친절하고 명확한 한국어로 안내해주세요.\\n\\nD-2 비자 연장 요건:\\n- 재정능력 입증 (financial_statement): 잔액 10,000,000원 이상 (학교별 변동), 발급일 30일 이내\\n- 성적 우수자 (평점 2.0 이상)는 재정능력 입증 면제 가능\\n- 여권 (passport): 만료일 180일 이상 남아야 함\\n- 결핵진단서 (tb_test): 고위험 35개국 출신만 필수\\n- 가족관계 입증 (family_relations): 부모 명의 재정증명 시에만 필수\\n\\n서류 상태(status)는 다음 4가지로 분류됩니다:\\n- \\\"completed\\\": 모든 조건 충족 → \\\"서류 준비 완료\\\" 톤\\n- \\\"missing\\\": 서류 자체가 없음/미제출 → \\\"이 서류를 추가로 제출해주세요\\\" 톤\\n- \\\"invalid\\\": 서류는 있는데 조건 불충족 (잔액 부족, 발급일 초과, 만료됨 등) → \\\"서류를 재발급/수정해주세요\\\" 톤\\n- \\\"warning\\\": 사람이 한 번 더 확인 필요한 경계선 케이스 → \\\"추가 확인이 필요해요\\\" 톤\\n각 status에 맞춰 적절한 톤과 next_action을 생성해주세요. 외국인 유학생이 명확히 다음 행동을 알 수 있도록.\\n\\n응답은 반드시 JSON 형식으로만, 다른 설명 없이 출력하세요.\"\n    },\n    {\n      role: \"user\",\n      content: \"추출된 서류 정보:\\n\" + $('Information Extract').item.json.choices[0].message.content + \"\\n\\n판단 결과:\\n\" + $('Solar Judgment').item.json.choices[0].message.content + \"\\n\\n위 정보를 바탕으로 각 서류별 한국어 안내문을 생성하세요. 다음 JSON 형식으로만 응답:\\n\\n{\\n  \\\"messages\\\": [\\n    {\\n      \\\"doc_type\\\": \\\"서류_종류_영문ID (예: financial_statement)\\\",\\n      \\\"summary\\\": \\\"한 문장 요약 (예: 잔액이 기준 금액보다 부족해요)\\\",\\n      \\\"extracted_value\\\": \\\"추출된 값 (예: USD 9,900). 없으면 빈 문자열\\\",\\n      \\\"required_value\\\": \\\"기준 값 (예: 10,000,000원 이상). 없으면 빈 문자열\\\",\\n      \\\"gap\\\": \\\"차이 (예: 약 100,000원 부족). 없으면 빈 문자열\\\",\\n      \\\"next_action\\\": \\\"다음 할 일을 구체적이고 친절하게. 예: 1) 발급일이 오래된 경우 → 발급일 30일 이내 잔고증명서 재발급 권장, 2) 외화인 경우 → 환율 적용해 10,000,000원 이상인지 확인, 3) 성적 우수자(평점 2.0 이상)면 → 성적증명서로 재정 입증 면제 가능\\\"\\n    }\\n  ]\\n}\"\n    }\n  ],\n  response_format: { type: \"json_object\" },\n  temperature: 0.3\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        224,
+        912
+      ],
+      "id": "b9fda7ce-3244-4649-a12c-265b03f80d59",
+      "name": "Solar Guidance KR",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "smJd9fATVQ6chaig",
+          "name": "Upstage API Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://dtadlofykptnblrmzzad.supabase.co/rest/v1/document_analysis",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "doc_id",
+              "value": "={{ $('DB Insert: Document').item.json.doc_id }}"
+            },
+            {
+              "name": "raw_text",
+              "value": "={{ $('Upstage Document Parse').item.json.content.text }}"
+            },
+            {
+              "name": "fields_json",
+              "value": "={{ JSON.stringify(JSON.parse($('Information Extract').item.json.choices[0].message.content)) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1728,
+        320
+      ],
+      "id": "ca7b98ec-e474-455a-aadc-96f036911efc",
+      "name": "DB Insert: DocumentAnalysis",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OgF9rJgMLuCrdeNY",
+          "name": "Supabase Auth"
+        },
+        "httpCustomAuth": {
+          "id": "DAj3kWD2Pg2JWURL",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://dtadlofykptnblrmzzad.supabase.co/rest/v1/user_session",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"user_id\": \"{{ $('Webhook').item.json.body.user_id }}\",\n  \"visa_type\": \"{{ $('Webhook').item.json.body.visa_type }}\",\n  \"language\": \"{{ $('Webhook').item.json.body.language }}\",\n  \"email\": \"{{ $('Webhook').item.json.body.email }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -352,
+        336
+      ],
+      "id": "f6641a6b-83cc-4707-83a8-92cb2df63175",
+      "name": "DB Insert: UserSession",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OgF9rJgMLuCrdeNY",
+          "name": "Supabase Auth"
+        },
+        "httpCustomAuth": {
+          "id": "DAj3kWD2Pg2JWURL",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://dtadlofykptnblrmzzad.supabase.co/rest/v1/document?doc_id=eq.{{ $('DB Insert: Document').item.json.doc_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"analyzed\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1904,
+        320
+      ],
+      "id": "a82d7782-9ec2-4ae9-a63a-9491596a42a1",
+      "name": "DB Update: Document",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OgF9rJgMLuCrdeNY",
+          "name": "Supabase Auth"
+        },
+        "httpCustomAuth": {
+          "id": "DAj3kWD2Pg2JWURL",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://dtadlofykptnblrmzzad.supabase.co/rest/v1/cross_check_result",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"session_id\": \"{{ $('Merge: UserSession Result').item.json.session_id }}\",\n  \"check_type\": \"name\",\n  \"status\": \"match\",\n  \"message\": \"교차검증 결과\",\n  \"related_doc_ids\": []\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        16,
+        912
+      ],
+      "id": "a5094059-5b86-4b16-86d6-06ecd0a51026",
+      "name": "DB Insert: CrossCheckResult",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OgF9rJgMLuCrdeNY",
+          "name": "Supabase Auth"
+        },
+        "httpCustomAuth": {
+          "id": "DAj3kWD2Pg2JWURL",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://dtadlofykptnblrmzzad.supabase.co/rest/v1/notification_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"session_id\": \"{{ $('Merge: UserSession Result').item.json.session_id }}\",\n  \"type\": \"result\",\n  \"recipient\": \"{{ $('Webhook').item.json.body.email }}\",\n  \"status\": \"sent\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        960,
+        912
+      ],
+      "id": "83478928-5c5b-4d1c-b631-d2b62c3c72b4",
+      "name": "DB Insert: NotificationLog",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OgF9rJgMLuCrdeNY",
+          "name": "Supabase Auth"
+        },
+        "httpCustomAuth": {
+          "id": "DAj3kWD2Pg2JWURL",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// 0. doc_type 라벨 매핑\n// ============================================\nconst docTypeKoMap = {\n  \"application_form\": \"체류자격 연장 신청서\",\n  \"passport\": \"여권 사본\",\n  \"academic_certificate\": \"재학증명서·성적증명서\",\n  \"financial_statement\": \"잔고증명서\",\n  \"residence_proof\": \"체류지 입증서류\",\n  \"tb_test\": \"결핵진단서\",\n  \"family_relations\": \"가족관계 입증서류\",\n  \"admission_letter\": \"표준입학허가서\",\n  \"business_registration\": \"교육기관 사업자등록증\",\n  \"photo\": \"표준규격 사진\",\n  \"professor_confirmation\": \"지도교수 확인서\",\n  \"other\": \"기타 서류\"\n};\n\nconst docTypeEnMap = {\n  \"application_form\": \"Visa Extension Application\",\n  \"passport\": \"Passport Copy\",\n  \"academic_certificate\": \"Academic Certificate / Transcript\",\n  \"financial_statement\": \"Bank Balance Certificate\",\n  \"residence_proof\": \"Proof of Residence\",\n  \"tb_test\": \"Tuberculosis Test Result\",\n  \"family_relations\": \"Family Relations Certificate\",\n  \"admission_letter\": \"Standard Admission Letter\",\n  \"business_registration\": \"Educational Institution Registration\",\n  \"photo\": \"Standard Photo\",\n  \"professor_confirmation\": \"Professor Confirmation\",\n  \"other\": \"Other Document\"\n};\n\n// ============================================\n// 1. 누적된 checklist_item 조회 + dedup\n// ============================================\nconst allChecklistItems = $('DB Select: AllChecklistItems').all().map(item => item.json);\n\nconst statusPriority = { \"missing\": 4, \"invalid\": 3, \"warning\": 2, \"completed\": 1 };\n\nconst docTypeDedupMap = {};\nfor (const item of allChecklistItems) {\n  const docType = item.doc_type;\n  if (!docTypeDedupMap[docType]) {\n    docTypeDedupMap[docType] = item;\n  } else {\n    const existingPriority = statusPriority[docTypeDedupMap[docType].status] || 0;\n    const newPriority = statusPriority[item.status] || 0;\n    if (newPriority > existingPriority) {\n      docTypeDedupMap[docType] = item;\n    }\n  }\n}\n\nconst uniqueDocs = Object.values(docTypeDedupMap).filter(it => it.doc_type !== \"other\");\n\n// ============================================\n// 2. documents 배열\n// ============================================\n// 프론트엔드 매핑 미적용 doc_type만 한국어로 박기 (임시 처리)\nconst docTypeForFrontend = {\n  \"academic_certificate\": \"재학증명서·성적증명서\",\n  \"tb_test\": \"결핵진단서\",\n  \"family_relations\": \"가족관계 입증서류\"\n};\n\nconst documents = uniqueDocs.map(it => ({\n  doc_type: docTypeForFrontend[it.doc_type] || it.doc_type,\n  doc_name: docTypeKoMap[it.doc_type] || it.doc_type,\n  status: it.status,\n  reason: it.reason\n}));\n\n// ============================================\n// 2-2. 누락된 필수 서류 자동 추가\n// ============================================\nconst requiredDocTypes = [\n  { type: \"application_form\", reason: \"체류자격 연장 신청서가 제출되지 않았어요. 서명한 신청서를 준비해주세요.\" },\n  { type: \"passport\", reason: \"여권 사본이 제출되지 않았어요. 만료일이 180일 이상 남은 여권 사본을 준비해주세요.\" },\n  { type: \"academic_certificate\", reason: \"재학증명서 또는 성적증명서가 제출되지 않았어요. 평점 2.0 이상이면 재정증명 면제도 가능해요.\" },\n  { type: \"financial_statement\", reason: \"재정능력 입증 서류가 제출되지 않았어요. 발급일 30일 이내, 1천만 원 이상 잔고증명서가 필요해요.\" },\n  { type: \"residence_proof\", reason: \"체류지 입증서류가 제출되지 않았어요. 임대차계약서나 기숙사비 영수증을 준비해주세요.\" }\n];\n\n// 업로드된 doc_type 영문 ID 추적 (uniqueDocs 기준)\nconst uploadedDocTypes = new Set(uniqueDocs.map(d => d.doc_type));\n\nfor (const req of requiredDocTypes) {\n  if (!uploadedDocTypes.has(req.type)) {\n    documents.push({\n      doc_type: docTypeForFrontend[req.type] || req.type,  // 한국어 변환 적용\n      doc_name: docTypeKoMap[req.type] || req.type,\n      status: \"missing\",\n      reason: req.reason\n    });\n  }\n}\n\n// ============================================\n// 3. readiness_pct & overall_status\n// ============================================\nconst totalCount = documents.length;\nconst completedCount = documents.filter(it => it.status === \"completed\").length;\nconst readiness_pct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;\n\nlet overall_status;\nif (documents.length === 0) {\n  overall_status = \"missing\";\n} else if (documents.some(it => it.status === \"missing\")) {\n  overall_status = \"missing\";\n} else if (documents.some(it => it.status === \"invalid\")) {\n  overall_status = \"invalid\";\n} else if (documents.some(it => it.status === \"warning\")) {\n  overall_status = \"warning\";\n} else {\n  overall_status = \"completed\";\n}\n\n// ============================================\n// 5. guidance — Solar 검증 + Fallback\n// ============================================\n\n// 5-1. 검증 함수들\nconst isValidKorean = (g) => {\n  if (!g || !g.summary) return false;\n  const text = (g.summary || \"\") + \" \" + (g.next_action || \"\");\n  const korCount = (text.match(/[가-힣]/g) || []).length;\n  const engCount = (text.match(/[a-zA-Z]/g) || []).length;\n  return korCount > engCount;\n};\n\nconst isValidEnglish = (g) => {\n  if (!g || !g.summary) return false;\n  const text = (g.summary || \"\") + \" \" + (g.next_action || \"\");\n  const korCount = (text.match(/[가-힣]/g) || []).length;\n  const engCount = (text.match(/[a-zA-Z]/g) || []).length;\n  return engCount > korCount;\n};\n\nconst isConsistentStatus = (g, docStatus) => {\n  if (!g) return false;\n  const text = (g.summary || \"\") + \" \" + (g.next_action || \"\");\n  \n  if (docStatus === \"completed\") {\n    const negativeKeywords = [\n      \"제출되지 않\", \"누락\", \"미제출\", \"준비해주세요\", \"발급받아\", \"다시 제출\", \n      \"확인되지 않\", \"입력되지 않\", \"정보가 없\", \"정보가 부족\",\n      \"not submitted\", \"not provided\", \"missing\", \"please submit\", \"please prepare\", \n      \"please obtain\", \"not confirmed\", \"needs to be\"\n    ];\n    return !negativeKeywords.some(kw => text.toLowerCase().includes(kw.toLowerCase()));\n  }\n  \n  return true;\n};\n\n// 5-2. Solar Guidance 결과 파싱\nlet solarKoMessages = [];\nlet solarEnMessages = [];\n\ntry {\n  const guidance_kr = JSON.parse($('Solar Guidance KR').item.json.choices[0].message.content);\n  solarKoMessages = guidance_kr.messages || [];\n} catch (e) {\n  solarKoMessages = [];\n}\n\ntry {\n  const guidance_en = JSON.parse($('Solar Guidance EN').item.json.choices[0].message.content);\n  solarEnMessages = guidance_en.messages || [];\n} catch (e) {\n  solarEnMessages = [];\n}\n\n// 5-3. Fallback 안내문 생성기\nconst getKoFallback = (docType, status, reason) => {\n  const docName = docTypeKoMap[docType] || docType;\n  \n  if (status === \"completed\") {\n    return {\n      doc_type: docType,\n      summary: reason || `${docName} 요건을 충족했어요`,\n      extracted_value: \"\",\n      required_value: \"\",\n      gap: \"\",\n      next_action: \"서류 요건을 충족합니다. 다른 서류 준비에 집중하세요.\"\n    };\n  }\n  \n  if (status === \"missing\") {\n    const messages = {\n      \"application_form\": \"체류자격 연장 신청서에 서명 후 제출해주세요.\",\n      \"passport\": \"여권 사본을 준비해주세요. 만료일이 180일 이상 남아야 합니다.\",\n      \"academic_certificate\": \"재학증명서와 성적증명서를 학교에서 발급받으세요. 평점 2.0 이상이면 재정증명 면제 가능합니다.\",\n      \"financial_statement\": \"본인 또는 부모님 명의의 잔고증명서를 발급일 30일 이내로 준비해주세요. 1,000만원 이상 필요합니다.\",\n      \"residence_proof\": \"임대차계약서 또는 기숙사비 영수증을 준비해주세요.\"\n    };\n    return {\n      doc_type: docType,\n      summary: reason || `${docName}가 제출되지 않았어요`,\n      extracted_value: \"\",\n      required_value: \"\",\n      gap: \"\",\n      next_action: messages[docType] || \"해당 서류를 준비해 제출해주세요.\"\n    };\n  }\n  \n  if (status === \"invalid\") {\n    return {\n      doc_type: docType,\n      summary: reason || `${docName}가 요건을 충족하지 못해요`,\n      extracted_value: \"\",\n      required_value: \"\",\n      gap: \"\",\n      next_action: \"서류 조건이 충족되지 않습니다. 재발급 또는 수정 후 다시 제출해주세요.\"\n    };\n  }\n  \n  return {\n    doc_type: docType,\n    summary: reason || `${docName} 추가 확인이 필요해요`,\n    extracted_value: \"\",\n    required_value: \"\",\n    gap: \"\",\n    next_action: \"추가 확인이 필요합니다. 학교 또는 출입국사무소에 문의해보세요.\"\n  };\n};\n\nconst getEnFallback = (docType, status, reason) => {\n  const docName = docTypeEnMap[docType] || docType;\n  \n  if (status === \"completed\") {\n    return {\n      doc_type: docType,\n      summary: `${docName} meets the requirements`,\n      extracted_value: \"\",\n      required_value: \"\",\n      gap: \"\",\n      next_action: \"This document meets the requirements. Focus on other documents.\"\n    };\n  }\n  \n  if (status === \"missing\") {\n    const messages = {\n      \"application_form\": \"Please sign and submit the visa extension application form.\",\n      \"passport\": \"Please prepare your passport copy. Validity must be 180+ days.\",\n      \"academic_certificate\": \"Please obtain academic certificate and transcript from your school. GPA 2.0+ qualifies for financial proof exemption.\",\n      \"financial_statement\": \"Please prepare a bank balance certificate (issued within 30 days) showing KRW 10,000,000 or more.\",\n      \"residence_proof\": \"Please prepare a lease contract or dormitory fee receipt.\"\n    };\n    return {\n      doc_type: docType,\n      summary: `${docName} not submitted`,\n      extracted_value: \"\",\n      required_value: \"\",\n      gap: \"\",\n      next_action: messages[docType] || \"Please submit this document.\"\n    };\n  }\n  \n  if (status === \"invalid\") {\n    return {\n      doc_type: docType,\n      summary: `${docName} does not meet requirements`,\n      extracted_value: \"\",\n      required_value: \"\",\n      gap: \"\",\n      next_action: \"Document does not meet requirements. Please re-issue or correct and resubmit.\"\n    };\n  }\n  \n  return {\n    doc_type: docType,\n    summary: `${docName} needs verification`,\n    extracted_value: \"\",\n    required_value: \"\",\n    gap: \"\",\n    next_action: \"Additional verification needed. Please consult your school or immigration office.\"\n  };\n};\n\n// 5-4. documents 기준으로 guidance 매칭 + 검증 + Fallback\nconst solarKoByDocType = {};\nfor (const g of solarKoMessages) {\n  if (g && g.doc_type) solarKoByDocType[g.doc_type] = g;\n}\n\nconst solarEnByDocType = {};\nfor (const g of solarEnMessages) {\n  if (g && g.doc_type) solarEnByDocType[g.doc_type] = g;\n}\n\nconst finalGuidanceKo = documents.map(doc => {\n  const solar = solarKoByDocType[doc.doc_type];\n  \n  if (solar && isValidKorean(solar) && isConsistentStatus(solar, doc.status)) {\n    return solar;\n  }\n  \n  return getKoFallback(doc.doc_type, doc.status, doc.reason);\n});\n\nconst finalGuidanceEn = documents.map(doc => {\n  const solar = solarEnByDocType[doc.doc_type];\n  \n  if (solar && isValidEnglish(solar) && isConsistentStatus(solar, doc.status)) {\n    return solar;\n  }\n  \n  return getEnFallback(doc.doc_type, doc.status, doc.reason);\n});\n\n// ============================================\n// 6. deadlines\n// ============================================\nfunction addDays(dateString, days) {\n  if (!dateString || !days) return \"\";\n  const date = new Date(dateString);\n  if (isNaN(date.getTime())) return \"\";\n  date.setDate(date.getDate() + days);\n  return date.toISOString().slice(0, 10);\n}\n\nfunction getDaysLeft(deadlineDate) {\n  if (!deadlineDate) return null;\n  const today = new Date();\n  const deadline = new Date(deadlineDate);\n  today.setHours(0, 0, 0, 0);\n  deadline.setHours(0, 0, 0, 0);\n  if (isNaN(deadline.getTime())) return null;\n  const diff = deadline.getTime() - today.getTime();\n  return Math.ceil(diff / (1000 * 60 * 60 * 24));\n}\n\nfunction getDeadlineLabel(daysLeft) {\n  if (daysLeft === null) return \"\";\n  if (daysLeft < 0) return \"만료됨\";\n  if (daysLeft === 0) return \"오늘 마감\";\n  return `D-${daysLeft}`;\n}\n\nfunction getDeadlineStatus(itemStatus, daysLeft) {\n  if (itemStatus === \"missing\") return \"제출 필요\";\n  if (itemStatus === \"invalid\") return \"재발급 필요\";\n  if (daysLeft !== null && daysLeft < 0) return \"만료됨\";\n  if (daysLeft !== null && daysLeft <= 7) return \"만료임박\";\n  if (itemStatus === \"warning\") return \"확인 필요\";\n  if (itemStatus === \"completed\") return \"통과\";\n  return \"확인 필요\";\n}\n\nconst validityDaysByDocType = {\n  financial_statement: 30,\n  academic_certificate: 30,\n  passport: null,\n  residence_proof: null,\n  tb_test: null,\n  family_relations: null,\n  admission_letter: null,\n  application_form: null,\n  photo: null,\n  business_registration: null,\n  professor_confirmation: null,\n  other: null\n};\n\nlet extracted = {};\ntry {\n  extracted = JSON.parse($('Information Extract').item.json.choices[0].message.content);\n} catch (e) {\n  extracted = {};\n}\n\nconst deadlines = documents.map(item => {\n  const docType = item.doc_type;\n  const issueDate = (extracted.document_type === docType) ? (extracted.issue_date || \"\") : \"\";\n  const expiryDate = (extracted.document_type === docType) ? (extracted.expiry_date || \"\") : \"\";\n  const validityDays = validityDaysByDocType[docType] || null;\n  const calculatedDeadline = expiryDate || addDays(issueDate, validityDays);\n  const daysLeft = getDaysLeft(calculatedDeadline);\n  const status = getDeadlineStatus(item.status, daysLeft);\n  const label = getDeadlineLabel(daysLeft);\n\n  let task = `${docTypeKoMap[docType] || docType} 확인`;\n  let message = item.reason || \"\";\n\n  return {\n    doc_type: docType,\n    doc_name: docTypeKoMap[docType] || docType,\n    task,\n    status,\n    base_date: issueDate || expiryDate || \"\",\n    deadline_date: calculatedDeadline || \"\",\n    days_left: daysLeft,\n    label,\n    message\n  };\n});\n\n// ============================================\n// 7. 최종 응답\n// ============================================\nreturn [{\n  json: {\n    session_id: $('Merge: UserSession Result').item.json.session_id,\n    visa_type: $('Webhook').item.json.body.visa_type,\n    readiness_pct,\n    overall_status,\n    deadlines,\n    documents,\n    guidance: {\n      ko: finalGuidanceKo,\n      en: finalGuidanceEn\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1504,
+        912
+      ],
+      "id": "1aab2b0c-46d8-48af-bc29-cbe28eed3530",
+      "name": "Transform: Dashboard Payload"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "0283e430-46f9-47b6-b334-4059ddbc082a",
+              "name": "body",
+              "value": "{\n\n  \"file_url\": \"https://raw.githubusercontent.com/Itda-16/vistay-backend/main/demo-files/09-financial-statement-warning.pdf\",\n\n  \"session_id\": \"test-session-001\"\n\n}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -560,
+        464
+      ],
+      "id": "6b0a7b04-8896-414f-b3f5-d0da63f18d5b",
+      "name": "Test Input"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "8d93ce56-451f-4d18-ab58-23a122ca1c09",
+              "name": "file_url",
+              "value": "={{ $('Webhook').item.json.body.file_url }}",
+              "type": "string"
+            },
+            {
+              "id": "6b35ed99-ecd5-4790-82a4-350527eb21c6",
+              "name": "visa_type",
+              "value": "={{ $('Webhook').item.json.body.visa_type }}",
+              "type": "string"
+            },
+            {
+              "id": "7744ef7e-99b7-4ba7-94cd-58505efca16e",
+              "name": "language",
+              "value": "={{ $('Webhook').item.json.body.language }}",
+              "type": "string"
+            },
+            {
+              "id": "f9654404-2916-4564-838a-f8cd9990f827",
+              "name": "email",
+              "value": "={{ $('Webhook').item.json.body.email }}",
+              "type": "string"
+            },
+            {
+              "id": "4b130e63-8213-44f2-a545-f78e9506e015",
+              "name": "user_id",
+              "value": "={{ $('Webhook').item.json.body.user_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        48,
+        320
+      ],
+      "id": "406d0d04-81c5-4e7e-9ffa-bfc00f5aad8f",
+      "name": "Set: Restore Webhook Body"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1392,
+        320
+      ],
+      "id": "d6af4bf5-d7fa-444c-8004-200ebe4d8d41",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.upstage.ai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: \"solar-pro\",\n  messages: [\n    {\n      role: \"system\",\n      content: \"You are a friendly assistant helping foreign students prepare D-2 visa documents in South Korea. Use clear, warm English since users may not be native English speakers either.\\n\\nD-2 visa extension requirements:\\n- Financial proof (financial_statement): Balance of 10,000,000 KRW or more (varies by school), issued within 30 days\\n- Students with GPA 2.0 or higher may be exempt from financial proof\\n- Passport: Must be valid for at least 180 days\\n- Tuberculosis test (tb_test): Required only for applicants from 35 high-risk countries\\n- Family relations proof (family_relations): Required only if financial proof is in parent's name\\n\\nDocument status is classified into 4 categories:\\n- \\\"completed\\\": All conditions met → \\\"Document ready\\\" tone\\n- \\\"missing\\\": Document not submitted/identified → \\\"Please submit this document\\\" tone\\n- \\\"invalid\\\": Document submitted but does not meet conditions (insufficient balance, expired issue date, expired document) → \\\"Please re-issue/correct the document\\\" tone\\n- \\\"warning\\\": Borderline case requiring human verification → \\\"Additional verification needed\\\" tone\\nAdapt the tone and next_action based on the status. Foreign students should clearly understand what to do next.\\n\\nRespond in JSON format only, with no additional explanation.\"\n    },\n    {\n      role: \"user\",\n      content: \"Extracted document info:\\n\" + $('Information Extract').item.json.choices[0].message.content + \"\\n\\nJudgment result:\\n\" + $('Solar Judgment').item.json.choices[0].message.content + \"\\n\\nBased on the above, generate English guidance messages for each document. Respond ONLY in this JSON format:\\n\\n{\\n  \\\"messages\\\": [\\n    {\\n      \\\"doc_type\\\": \\\"document type English ID (e.g. financial_statement)\\\",\\n      \\\"summary\\\": \\\"One sentence summary (e.g. Your balance is below the required amount)\\\",\\n      \\\"extracted_value\\\": \\\"Extracted value (e.g. USD 9,900). Empty string if none\\\",\\n      \\\"required_value\\\": \\\"Required value (e.g. 10,000,000 KRW or more). Empty string if none\\\",\\n      \\\"gap\\\": \\\"Difference (e.g. Approximately 100,000 KRW short). Empty string if none\\\",\\n      \\\"next_action\\\": \\\"Concrete and friendly next steps. Examples: 1) If issue date is old → Re-issue bank statement within 30 days, 2) If foreign currency → Verify converted amount exceeds 10,000,000 KRW, 3) If GPA 2.0 or higher → Financial proof exemption may be available via transcript\\\"\\n    }\\n  ]\\n}\"\n    }\n  ],\n  response_format: { type: \"json_object\" },\n  temperature: 0.3\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        576,
+        912
+      ],
+      "id": "e11a317c-051a-4d20-80a1-16ad1c6dc141",
+      "name": "Solar Guidance EN",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "smJd9fATVQ6chaig",
+          "name": "Upstage API Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://dtadlofykptnblrmzzad.supabase.co/rest/v1/guidance_message",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "session_id",
+              "value": "={{ $('Merge: UserSession Result').item.json.session_id }}"
+            },
+            {
+              "name": "language",
+              "value": "ko"
+            },
+            {
+              "name": "content",
+              "value": "={{ $('Solar Guidance KR').item.json.choices[0].message.content }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        400,
+        912
+      ],
+      "id": "7782ce82-cd32-4c84-88ef-21cbeb2f5116",
+      "name": "DB Insert: GuidanceMessage (KR)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OgF9rJgMLuCrdeNY",
+          "name": "Supabase Auth"
+        },
+        "httpCustomAuth": {
+          "id": "DAj3kWD2Pg2JWURL",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://dtadlofykptnblrmzzad.supabase.co/rest/v1/guidance_message",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "session_id",
+              "value": "={{ $('Merge: UserSession Result').item.json.session_id }}"
+            },
+            {
+              "name": "language",
+              "value": "en"
+            },
+            {
+              "name": "content",
+              "value": "={{ $('Solar Guidance EN').item.json.choices[0].message.content }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        768,
+        912
+      ],
+      "id": "996deed4-4d3d-49f4-95a1-b6d9fd710be0",
+      "name": "DB Insert: GuidanceMessage (EN)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OgF9rJgMLuCrdeNY",
+          "name": "Supabase Auth"
+        },
+        "httpCustomAuth": {
+          "id": "DAj3kWD2Pg2JWURL",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// 1. VisaRequirement에서 doc_type별 UUID 매핑 만들기\n// ============================================\nconst visaRequirements = $('DB Select: VisaRequirement').all();\n\nconst docTypeMap = {\n  \"passport\": \"여권\",\n  \"academic_certificate\": \"재학증명\",\n  \"financial_statement\": \"재정증명\",\n  \"residence_proof\": \"체류지입증\",\n  \"tb_test\": \"결핵진단서\",\n  \"application_form\": \"통합신청서\",\n  \"photo\": \"표준규격 사진\",\n  \"business_registration\": \"교육기관 사업자등록증\",\n  \"admission_letter\": \"표준입학허가서\",\n  \"family_relations\": \"가족관계 입증서류\",\n  \"professor_confirmation\": \"지도교수 확인서\"\n};\n\nconst docTypeToReqId = {};\nfor (const req of visaRequirements) {\n  if (req.json && req.json.doc_type) {\n    docTypeToReqId[req.json.doc_type] = req.json.requirement_id;\n  }\n}\n\nfunction getReqIdByDocType(docTypeEn) {\n  const docTypeKr = docTypeMap[docTypeEn];\n  if (!docTypeKr) return null;\n  return docTypeToReqId[docTypeKr] || null;\n}\n\n// ============================================\n// 2. Information Extract 결과 파싱\n// ============================================\nlet extracted;\ntry {\n  extracted = JSON.parse($('Information Extract').item.json.choices[0].message.content);\n} catch (e) {\n  extracted = { document_type: \"other\" };\n}\n\nconst ruleResults = [];\nconst ambiguousItems = [];\nconst docType = extracted.document_type;\n\n// ============================================\n// 3. 룰 기반 판단\n// ============================================\n\n// 3-1. document_type 분류 실패 → missing\nif (!docType || docType === \"other\") {\n  ruleResults.push({\n    req_id: null,\n    doc_type: \"other\",\n    status: \"missing\",\n    decision_by: \"rule\",\n    reason: \"서류 종류를 식별할 수 없음. 명확한 비자 서류를 업로드해주세요.\",\n    evidence_doc_id: null\n  });\n} else {\n\n  // 3-2. financial_statement (재정증명)\n  if (docType === \"financial_statement\") {\n    const balance = extracted.balance_amount;\n    const currency = extracted.balance_currency;\n    const issueDate = extracted.issue_date;\n    const reqId = getReqIdByDocType(\"financial_statement\");\n    \n    // 외화 환산 처리 (실제 환율 API 사용)\n    if (currency && currency !== \"KRW\") {\n      // 환율 API 결과 파싱 (폴백 환율 포함)\n      let krwBalance;\n      let rateUsed;\n      \n      try {\n        const ratesData = $('Fetch Exchange Rates').item.json.rates;\n        \n        if (currency === \"USD\") {\n          rateUsed = ratesData.KRW;\n        } else if (ratesData[currency] && ratesData.KRW) {\n          // USD 기준 환율 → 해당 통화 → KRW 변환\n          rateUsed = ratesData.KRW / ratesData[currency];\n        } else {\n          // 통화 데이터 없음 → 폴백\n          const fallback = { USD: 1350, CNY: 185, JPY: 8.7, EUR: 1450 };\n          rateUsed = fallback[currency] || 1350;\n        }\n        krwBalance = Math.round(balance * rateUsed);\n      } catch (e) {\n        // API 실패 → 폴백 환율\n        const fallback = { USD: 1350, CNY: 185, JPY: 8.7, EUR: 1450 };\n        rateUsed = fallback[currency] || 1350;\n        krwBalance = Math.round(balance * rateUsed);\n      }\n      \n      // 명확히 미달 → invalid\n      if (krwBalance <= 9000000) {\n        ruleResults.push({\n          req_id: reqId,\n          doc_type: \"financial_statement\",\n          status: \"invalid\",\n          decision_by: \"rule\",\n          reason: balance + \" \" + currency + \" × \" + rateUsed.toFixed(2) + \"원 = 약 \" + krwBalance.toLocaleString() + \"원 (기준 10,000,000원 명확히 미달)\",\n          evidence_doc_id: null\n        });\n      }\n      else if (krwBalance >= 11000000) {\n        ruleResults.push({\n          req_id: reqId,\n          doc_type: \"financial_statement\",\n          status: \"completed\",\n          decision_by: \"rule\",\n          reason: balance + \" \" + currency + \" × \" + rateUsed.toFixed(2) + \"원 = 약 \" + krwBalance.toLocaleString() + \"원 (기준 10,000,000원 명확히 충족)\",\n          evidence_doc_id: null\n        });\n      }\n      else {\n        ruleResults.push({\n          req_id: reqId,\n          doc_type: \"financial_statement\",\n          status: \"warning\",\n          decision_by: \"rule\",\n          reason: balance + \" \" + currency + \" × \" + rateUsed.toFixed(2) + \"원 = 약 \" + krwBalance.toLocaleString() + \"원 (기준 10,000,000원 ±10% 경계선, 환율 변동 주의)\",\n          evidence_doc_id: null\n        });\n      }\n    }\n    // 명확히 미달 → invalid\n    else if (balance > 0 && balance <= 9000000) {\n      ruleResults.push({\n        req_id: reqId,\n        doc_type: \"financial_statement\",\n        status: \"invalid\",\n        decision_by: \"rule\",\n        reason: \"잔액 \" + balance.toLocaleString() + \"원은 기준 10,000,000원 명확히 미달 (10% 이상 부족)\",\n        evidence_doc_id: null\n      });\n    }\n    // 명확히 충족 → completed\n    else if (balance >= 11000000) {\n      ruleResults.push({\n        req_id: reqId,\n        doc_type: \"financial_statement\",\n        status: \"completed\",\n        decision_by: \"rule\",\n        reason: \"잔액 \" + balance.toLocaleString() + \"원은 기준 10,000,000원 명확히 충족\",\n        evidence_doc_id: null\n      });\n    }\n    // ±10% 근접 → warning\n    else if (balance > 9000000 && balance < 11000000) {\n      ambiguousItems.push({\n        doc_type: \"financial_statement\",\n        reason: \"잔액 기준 ±10% 근접 (Solar 판단 필요)\",\n        extracted_value: balance + \" KRW\"\n      });\n    }\n    \n    // 발급일 체크\n    if (issueDate) {\n      const daysSinceIssue = Math.floor((new Date() - new Date(issueDate)) / (1000 * 60 * 60 * 24));\n      if (daysSinceIssue > 35) {\n        ruleResults.push({\n          req_id: reqId,\n          doc_type: \"financial_statement\",\n          status: \"invalid\",\n          decision_by: \"rule\",\n          reason: \"발급일이 \" + daysSinceIssue + \"일 전으로 30일 명확히 초과 (재발급 필요)\",\n          evidence_doc_id: null\n        });\n      } \n      else if (daysSinceIssue >= 0 && daysSinceIssue < 25) {\n        ruleResults.push({\n          req_id: reqId,\n          doc_type: \"financial_statement\",\n          status: \"completed\",\n          decision_by: \"rule\",\n          reason: \"발급일 \" + daysSinceIssue + \"일 전 (30일 이내 명확히 충족)\",\n          evidence_doc_id: null\n        });\n      } \n      else if (daysSinceIssue >= 25 && daysSinceIssue <= 35) {\n        ambiguousItems.push({\n          doc_type: \"financial_statement_validity\",\n          reason: \"발급일 30일 경계선 ±5일\",\n          extracted_value: issueDate\n        });\n      }\n    }\n  }\n  \n  // 3-3. passport (여권)\n  if (docType === \"passport\") {\n    const expiryDate = extracted.expiry_date;\n    const reqId = getReqIdByDocType(\"passport\");\n    \n    if (expiryDate) {\n      const daysToExpiry = Math.floor((new Date(expiryDate) - new Date()) / (1000 * 60 * 60 * 24));\n      \n      if (daysToExpiry < 90) {\n        ruleResults.push({\n          req_id: reqId,\n          doc_type: \"passport\",\n          status: \"invalid\",\n          decision_by: \"rule\",\n          reason: \"여권 만료까지 \" + daysToExpiry + \"일 남음 (180일 기준 미달, 갱신 필요)\",\n          evidence_doc_id: null\n        });\n      } \n      else if (daysToExpiry > 270) {\n        ruleResults.push({\n          req_id: reqId,\n          doc_type: \"passport\",\n          status: \"completed\",\n          decision_by: \"rule\",\n          reason: \"여권 만료까지 \" + daysToExpiry + \"일 남음 (180일 기준 명확히 충족)\",\n          evidence_doc_id: null\n        });\n      } \n      else {\n        ambiguousItems.push({\n          doc_type: \"passport\",\n          reason: \"여권 만료 기준 180일 ±90일 근접\",\n          extracted_value: expiryDate\n        });\n      }\n    } else {\n      // 만료일 추출 실패 → warning (사람이 확인)\n      ruleResults.push({\n        req_id: reqId,\n        doc_type: \"passport\",\n        status: \"warning\",\n        decision_by: \"rule\",\n        reason: \"여권 만료일 정보를 추출할 수 없어 확인이 필요합니다.\",\n        evidence_doc_id: null\n      });\n    }\n  }\n  \n  // 3-4. academic_certificate (재학증명·성적증명)\n  if (docType === \"academic_certificate\") {\n    const reqId = getReqIdByDocType(\"academic_certificate\");\n    const gpa = extracted.gpa;\n    const gpaScale = extracted.gpa_scale;\n    \n    // GPA 추출 성공\n    if (gpa > 0 && gpaScale > 0) {\n      const gpaRatio = gpa / gpaScale;\n      // 평점 2.0 이상 (4.0 만점 기준 0.5 이상) → 재정 면제 가능\n      if (gpaRatio >= 0.5) {\n        ruleResults.push({\n          req_id: reqId,\n          doc_type: \"academic_certificate\",\n          status: \"completed\",\n          decision_by: \"rule\",\n          reason: \"성적증명서 제출 확인 (평점 \" + gpa + \"/\" + gpaScale + \"). 평점 2.0 이상으로 재정증명 면제 가능\",\n          evidence_doc_id: null\n        });\n      } else {\n        ruleResults.push({\n          req_id: reqId,\n          doc_type: \"academic_certificate\",\n          status: \"warning\",\n          decision_by: \"rule\",\n          reason: \"성적증명서 제출 확인 (평점 \" + gpa + \"/\" + gpaScale + \"). 평점 2.0 미만으로 재정증명 면제 불가, 재정증명서 별도 제출 필요\",\n          evidence_doc_id: null\n        });\n      }\n    } else {\n      // GPA 추출 실패 → 그래도 서류 제출은 확인됨\n      ruleResults.push({\n        req_id: reqId,\n        doc_type: \"academic_certificate\",\n        status: \"completed\",\n        decision_by: \"rule\",\n        reason: \"재학증명서·성적증명서 제출 확인\",\n        evidence_doc_id: null\n      });\n    }\n  }\n  \n  // 3-5. tb_test (결핵검진)\n  if (docType === \"tb_test\") {\n    const reqId = getReqIdByDocType(\"tb_test\");\n    const issueDate = extracted.issue_date;\n    \n    // 발급일 체크 (3개월 이내 권장)\n    if (issueDate) {\n      const daysSinceIssue = Math.floor((new Date() - new Date(issueDate)) / (1000 * 60 * 60 * 24));\n      if (daysSinceIssue > 90) {\n        ruleResults.push({\n          req_id: reqId,\n          doc_type: \"tb_test\",\n          status: \"warning\",\n          decision_by: \"rule\",\n          reason: \"결핵진단서 발급일이 \" + daysSinceIssue + \"일 전 (3개월 초과, 재발급 권장)\",\n          evidence_doc_id: null\n        });\n      } else {\n        ruleResults.push({\n          req_id: reqId,\n          doc_type: \"tb_test\",\n          status: \"completed\",\n          decision_by: \"rule\",\n          reason: \"결핵진단서 제출 확인 (발급일 \" + daysSinceIssue + \"일 전, 3개월 이내)\",\n          evidence_doc_id: null\n        });\n      }\n    } else {\n      ruleResults.push({\n        req_id: reqId,\n        doc_type: \"tb_test\",\n        status: \"completed\",\n        decision_by: \"rule\",\n        reason: \"결핵진단서 제출 확인\",\n        evidence_doc_id: null\n      });\n    }\n  }\n  \n  // 3-6. application_form (통합신청서)\n  if (docType === \"application_form\") {\n    const reqId = getReqIdByDocType(\"application_form\");\n    ruleResults.push({\n      req_id: reqId,\n      doc_type: \"application_form\",\n      status: \"completed\",\n      decision_by: \"rule\",\n      reason: \"체류자격 연장 신청서 제출 확인\",\n      evidence_doc_id: null\n    });\n  }\n  \n  // 3-7. residence_proof (체류지 입증)\n  if (docType === \"residence_proof\") {\n    const reqId = getReqIdByDocType(\"residence_proof\");\n    ruleResults.push({\n      req_id: reqId,\n      doc_type: \"residence_proof\",\n      status: \"completed\",\n      decision_by: \"rule\",\n      reason: \"체류지 입증서류 제출 확인\",\n      evidence_doc_id: null\n    });\n  }\n  \n  // 3-8. family_relations (가족관계)\n  if (docType === \"family_relations\") {\n    const reqId = getReqIdByDocType(\"family_relations\");\n    ruleResults.push({\n      req_id: reqId,\n      doc_type: \"family_relations\",\n      status: \"completed\",\n      decision_by: \"rule\",\n      reason: \"가족관계 입증서류 제출 확인 (부모 명의 재정증명 시 필수)\",\n      evidence_doc_id: null\n    });\n  }\n  \n  // 3-9. 그 외 doc_type (admission_letter, business_registration, photo, professor_confirmation 등)\n  const handledTypes = [\"financial_statement\", \"passport\", \"academic_certificate\", \"tb_test\", \"application_form\", \"residence_proof\", \"family_relations\"];\n  if (!handledTypes.includes(docType)) {\n    const reqId = getReqIdByDocType(docType);\n    ruleResults.push({\n      req_id: reqId,\n      doc_type: docType,\n      status: \"completed\",\n      decision_by: \"rule\",\n      reason: docType + \" 서류 제출 확인\",\n      evidence_doc_id: null\n    });\n  }\n}\n\n// ============================================\n// 4. 결과 출력\n// ============================================\nreturn [{\n  json: {\n    rule_results: ruleResults,\n    ambiguous_items: ambiguousItems,\n    needs_solar: ambiguousItems.length > 0,\n    extracted_data: extracted,\n    rule_count: ruleResults.length,\n    solar_count: ambiguousItems.length,\n    doc_type_mapping: docTypeToReqId\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        320
+      ],
+      "id": "4416dfe9-db33-4ed5-aa22-ead9d45f47c5",
+      "name": "Transform: Checklist Validation"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        928,
+        640
+      ],
+      "id": "c1ad3f4f-5dfa-4877-9154-fd5b24dbe48d",
+      "name": "Merge: Validation Results"
+    },
+    {
+      "parameters": {
+        "url": "=https://dtadlofykptnblrmzzad.supabase.co/rest/v1/document_analysis?select=*,document!inner(doc_id,session_id,file_url)&document.session_id=eq.{{ $('Merge: UserSession Result').item.json.session_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -384,
+        912
+      ],
+      "id": "5881fc20-6ef9-4471-80fa-f12d5c97e6e9",
+      "name": "DB Select: PreviousDocuments",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OgF9rJgMLuCrdeNY",
+          "name": "Supabase Auth"
+        },
+        "httpCustomAuth": {
+          "id": "DAj3kWD2Pg2JWURL",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// 1. 현재 서류 추출 결과\n// ============================================\nconst currentExtracted = JSON.parse($('Information Extract').item.json.choices[0].message.content);\nconst currentDocId = $('DB Insert: Document').item.json.doc_id;\n\n// ============================================\n// 2. 이전 서류들 가져오기 (현재 서류 제외)\n// ============================================\nconst previousDocs = $('DB Select: PreviousDocuments').all()\n  .map(item => item.json)\n  .filter(doc => doc.doc_id !== currentDocId);  // 현재 서류 제외\n\n// ============================================\n// 3. 이전 서류들의 추출 정보 파싱\n// ============================================\nconst previousExtracted = previousDocs.map(doc => {\n  try {\n    const fields = typeof doc.fields_json === \"string\" \n      ? JSON.parse(doc.fields_json) \n      : doc.fields_json;\n    return {\n      doc_id: doc.doc_id,\n      ...fields\n    };\n  } catch (e) {\n    return null;\n  }\n}).filter(x => x !== null);\n\n// ============================================\n// 4. 교차검증 결과 배열\n// ============================================\nconst crossCheckResults = [];\n\n// 4-1. 이름 일치 검증\nif (currentExtracted.applicant_name && previousExtracted.length > 0) {\n  for (const prev of previousExtracted) {\n    if (prev.applicant_name && prev.applicant_name.trim() !== \"\") {\n      const currentName = currentExtracted.applicant_name.trim().toUpperCase();\n      const prevName = prev.applicant_name.trim().toUpperCase();\n      \n      if (currentName === prevName) {\n        crossCheckResults.push({\n          check_type: \"name\",\n          status: \"match\",\n          message: \"이름 일치 (\" + currentExtracted.applicant_name + \") - 현재 서류와 이전 \" + prev.document_type + \" 비교\",\n          related_doc_ids: [currentDocId, prev.doc_id]\n        });\n      } else {\n        crossCheckResults.push({\n          check_type: \"name\",\n          status: \"mismatch\",\n          message: \"이름 불일치: 현재 서류(\" + currentExtracted.applicant_name + \") vs 이전 \" + prev.document_type + \"(\" + prev.applicant_name + \")\",\n          related_doc_ids: [currentDocId, prev.doc_id]\n        });\n      }\n      break;  // 첫 이전 서류와 한 번만 비교 (중복 방지)\n    }\n  }\n}\n\n// 4-2. 대학명 일치 검증\nif (currentExtracted.university_name && previousExtracted.length > 0) {\n  for (const prev of previousExtracted) {\n    if (prev.university_name && prev.university_name.trim() !== \"\") {\n      const currentUni = currentExtracted.university_name.trim();\n      const prevUni = prev.university_name.trim();\n      \n      if (currentUni === prevUni) {\n        crossCheckResults.push({\n          check_type: \"university_name\",\n          status: \"match\",\n          message: \"대학명 일치 (\" + currentUni + \") - 현재 서류와 이전 \" + prev.document_type + \" 비교\",\n          related_doc_ids: [currentDocId, prev.doc_id]\n        });\n      } else {\n        crossCheckResults.push({\n          check_type: \"university_name\",\n          status: \"mismatch\",\n          message: \"대학명 불일치: 현재(\" + currentUni + \") vs 이전 \" + prev.document_type + \"(\" + prevUni + \")\",\n          related_doc_ids: [currentDocId, prev.doc_id]\n        });\n      }\n      break;\n    }\n  }\n}\n\n// 4-3. 국적 ↔ 결핵검진 매칭 (이전 서류 안 봄, 현재 서류 안에서만)\nif (currentExtracted.nationality) {\n  const highRiskCountries = [\"중국\", \"베트남\", \"네팔\", \"필리핀\", \"인도네시아\", \"미얀마\", \"캄보디아\", \"방글라데시\", \"스리랑카\", \"몽골\", \"우즈베키스탄\", \"러시아\", \"태국\", \"라오스\", \"키르기스스탄\"];\n  const isHighRisk = highRiskCountries.some(country => currentExtracted.nationality.includes(country));\n  \n  // 이전 서류 중 tb_test가 있는지 확인\n  const hasTbTest = previousExtracted.some(prev => prev.document_type === \"tb_test\") \n    || currentExtracted.document_type === \"tb_test\";\n  \n  if (isHighRisk && !hasTbTest) {\n    crossCheckResults.push({\n      check_type: \"nationality_tb_test\",\n      status: \"missing\",\n      message: \"국적(\" + currentExtracted.nationality + \")이 결핵 고위험 35개국에 해당하나 결핵진단서 미제출\",\n      related_doc_ids: [currentDocId]\n    });\n  } else if (isHighRisk && hasTbTest) {\n    crossCheckResults.push({\n      check_type: \"nationality_tb_test\",\n      status: \"match\",\n      message: \"국적(\" + currentExtracted.nationality + \") 결핵 고위험국 출신 + 결핵진단서 제출 확인\",\n      related_doc_ids: [currentDocId]\n    });\n  }\n}\n\n// ============================================\n// 5. 결과 출력\n// ============================================\nreturn [{\n  json: {\n    cross_check_results: crossCheckResults,\n    current_doc_id: currentDocId,\n    previous_doc_count: previousExtracted.length,\n    check_count: crossCheckResults.length\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -192,
+        912
+      ],
+      "id": "e81069a1-4d96-4463-87a8-b1cdcd740744",
+      "name": "Transform: CrossCheck Validation"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "d5e2bc19-312e-426d-b96a-8cb204d538d1",
+              "leftValue": "={{ $json.body.session_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -560,
+        320
+      ],
+      "id": "d993810d-6093-4ddf-8f27-d8b6b476b3af",
+      "name": "IF: session_id exists"
+    },
+    {
+      "parameters": {
+        "url": "=https://dtadlofykptnblrmzzad.supabase.co/rest/v1/user_session?session_id=eq.{{ $('Webhook').item.json.body.session_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -352,
+        192
+      ],
+      "id": "938d3901-ea1d-4195-98ad-a7c605618dc5",
+      "name": "DB Select: UserSession",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OgF9rJgMLuCrdeNY",
+          "name": "Supabase Auth"
+        },
+        "httpCustomAuth": {
+          "id": "DAj3kWD2Pg2JWURL",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -128,
+        320
+      ],
+      "id": "9f2fe053-23bc-4abe-ad7d-6ad324562c6d",
+      "name": "Merge: UserSession Result"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://dtadlofykptnblrmzzad.supabase.co/rest/v1/user_session?session_id=eq.{{ $('Transform: Dashboard Payload').item.json.session_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "readiness_pct",
+              "value": "={{ $('Transform: Dashboard Payload').item.json.readiness_pct }}"
+            },
+            {
+              "name": "overall_status",
+              "value": "={{ $('Transform: Dashboard Payload').item.json.overall_status }}"
+            },
+            {
+              "name": "guidance_json",
+              "value": "={{ $('Transform: Dashboard Payload').item.json.guidance }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1680,
+        912
+      ],
+      "id": "3f00e323-d5f6-4ac9-88a2-7fd33aa6177f",
+      "name": "DB Update: UserSession",
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "DAj3kWD2Pg2JWURL",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://dtadlofykptnblrmzzad.supabase.co/rest/v1/result_report",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n  {\n    \"session_id\": $('Transform: Dashboard Payload').item.json.session_id,\n    \"language\": $('Webhook').item.json.body.language,\n    \"summary_json\": $('Transform: Dashboard Payload').item.json\n  }\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1872,
+        912
+      ],
+      "id": "7c213927-1730-46ce-ba33-da71b4c35426",
+      "name": "DB Insert: ResultReport",
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "DAj3kWD2Pg2JWURL",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "9174b549-7be0-4ce5-b994-267dc2468cf4",
+              "leftValue": "={{ $('Webhook').item.json.body.file_url }}",
+              "rightValue": ".pdf",
+              "operator": {
+                "type": "string",
+                "operation": "endsWith"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        800,
+        336
+      ],
+      "id": "e2a55e6b-e902-4717-9e5f-5d1d0d5351d1",
+      "name": "IF: file is PDF"
+    },
+    {
+      "parameters": {
+        "url": "https://open.er-api.com/v6/latest/USD",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1568,
+        320
+      ],
+      "id": "e29f633d-10a9-42cb-a7d1-c905c895ad94",
+      "name": "Fetch Exchange Rates",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://dtadlofykptnblrmzzad.supabase.co/rest/v1/checklist_item?session_id=eq.{{ $('Merge: UserSession Result').item.json.session_id }}&select=*&order=updated_at.asc",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1152,
+        912
+      ],
+      "id": "3d15b8a0-6329-4ccf-b8ae-5df4da2a51ec",
+      "name": "DB Select: AllChecklistItems",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OgF9rJgMLuCrdeNY",
+          "name": "Supabase Auth"
+        },
+        "httpCustomAuth": {
+          "id": "DAj3kWD2Pg2JWURL",
+          "name": "Supabase Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://dtadlofykptnblrmzzad.supabase.co/rest/v1/guidance_message?session_id=eq.{{ $('Merge: UserSession Result').item.json.session_id }}&select=*&order=created_at.asc",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1312,
+        912
+      ],
+      "id": "006cbeef-c6b0-4424-b199-f31683c614b9",
+      "name": "DB Select: AllGuidanceMessages",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OgF9rJgMLuCrdeNY",
+          "name": "Supabase Auth"
+        },
+        "httpCustomAuth": {
+          "id": "DAj3kWD2Pg2JWURL",
+          "name": "Supabase Service Role"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "IF: session_id exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "DB Insert: Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Insert: Document": {
+      "main": [
+        [
+          {
+            "node": "Download Test PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Test PDF": {
+      "main": [
+        [
+          {
+            "node": "Upstage Document Parse",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF: file is PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert PDF to PNG": {
+      "main": [
+        [
+          {
+            "node": "Information Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Information Extract": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Solar Judgment": {
+      "main": [
+        [
+          {
+            "node": "Merge: Validation Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Solar Guidance KR": {
+      "main": [
+        [
+          {
+            "node": "DB Insert: GuidanceMessage (KR)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Insert: ChecklistItem": {
+      "main": [
+        [
+          {
+            "node": "DB Select: PreviousDocuments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Insert: UserSession": {
+      "main": [
+        [
+          {
+            "node": "Merge: UserSession Result",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Upstage Document Parse": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "DB Insert: DocumentAnalysis": {
+      "main": [
+        [
+          {
+            "node": "DB Update: Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Insert: NotificationLog": {
+      "main": [
+        [
+          {
+            "node": "DB Select: AllChecklistItems",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform: Dashboard Payload": {
+      "main": [
+        [
+          {
+            "node": "DB Update: UserSession",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Test Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test Input": {
+      "main": [
+        [
+          {
+            "node": "DB Insert: UserSession",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Restore Webhook Body": {
+      "main": [
+        [
+          {
+            "node": "DB Select: VisaRequirement",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Fetch Exchange Rates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Solar Guidance EN": {
+      "main": [
+        [
+          {
+            "node": "DB Insert: GuidanceMessage (EN)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Insert: GuidanceMessage (KR)": {
+      "main": [
+        [
+          {
+            "node": "Solar Guidance EN",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Insert: GuidanceMessage (EN)": {
+      "main": [
+        [
+          {
+            "node": "DB Insert: NotificationLog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Update: Document": {
+      "main": [
+        [
+          {
+            "node": "Transform: Checklist Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform: Checklist Validation": {
+      "main": [
+        [
+          {
+            "node": "Merge: Validation Results",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Solar Judgment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge: Validation Results": {
+      "main": [
+        [
+          {
+            "node": "DB Insert: ChecklistItem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Select: VisaRequirement": {
+      "main": [
+        []
+      ]
+    },
+    "DB Select: PreviousDocuments": {
+      "main": [
+        [
+          {
+            "node": "Transform: CrossCheck Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform: CrossCheck Validation": {
+      "main": [
+        [
+          {
+            "node": "DB Insert: CrossCheckResult",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Insert: CrossCheckResult": {
+      "main": [
+        [
+          {
+            "node": "Solar Guidance KR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: session_id exists": {
+      "main": [
+        [
+          {
+            "node": "DB Select: UserSession",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB Insert: UserSession",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Select: UserSession": {
+      "main": [
+        [
+          {
+            "node": "Merge: UserSession Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge: UserSession Result": {
+      "main": [
+        [
+          {
+            "node": "Set: Restore Webhook Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Update: UserSession": {
+      "main": [
+        [
+          {
+            "node": "DB Insert: ResultReport",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Insert: ResultReport": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: file is PDF": {
+      "main": [
+        [
+          {
+            "node": "Convert PDF to PNG",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Information Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Exchange Rates": {
+      "main": [
+        [
+          {
+            "node": "DB Insert: DocumentAnalysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Select: AllChecklistItems": {
+      "main": [
+        [
+          {
+            "node": "DB Select: AllGuidanceMessages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Select: AllGuidanceMessages": {
+      "main": [
+        [
+          {
+            "node": "Transform: Dashboard Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "67e2cf24-332c-4f16-aac2-8388503c18a0",
+  "meta": {
+    "instanceId": "0fd1ede05e6672c9584a8031df04c1bf559cd3d49ab30052679d90806cb35efd"
+  },
+  "id": "zIN7Mo7jvHKdj4jB",
+  "tags": []
+}

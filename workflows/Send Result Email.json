@@ -1,0 +1,250 @@
+{
+  "name": "Send Result Email",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "send-result-email",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "a6a78937-f5d8-4b3f-82d2-2c90b658433c",
+      "name": "Webhook: Send Result Email",
+      "webhookId": "0a7a2665-c3cb-442e-a809-1f22b8f3586b"
+    },
+    {
+      "parameters": {
+        "url": "=https://dtadlofykptnblrmzzad.supabase.co/rest/v1/result_report?session_id=eq.{{ $('Webhook: Send Result Email').item.json.body.session_id }}&order=created_at.desc&limit=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        208,
+        0
+      ],
+      "id": "04d75325-4b55-40f7-a095-5810a4d719bc",
+      "name": "DB Select: ResultReport",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "5wXo0Mnu6bBc6Xxz",
+          "name": "Supabase Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://dtadlofykptnblrmzzad.supabase.co/rest/v1/user_session?session_id=eq.{{ $('Webhook: Send Result Email').item.json.body.session_id }}&select=session_id,user_id,email,visa_type,readiness_pct,overall_status",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        416,
+        0
+      ],
+      "id": "3ba6934a-1b1c-44d2-96dc-f897b37b4aef",
+      "name": "DB Select: UserSession",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "5wXo0Mnu6bBc6Xxz",
+          "name": "Supabase Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const report = $('DB Select: ResultReport').item.json;\nconst session = $('DB Select: UserSession').item.json;\n\nlet summary = report.summary_json || {};\n\n// summary_json이 문자열로 저장된 경우 JSON으로 변환\nif (typeof summary === \"string\") {\n  summary = JSON.parse(summary);\n}\n\n// 이중 문자열화된 경우 한 번 더 변환\nif (typeof summary === \"string\") {\n  summary = JSON.parse(summary);\n}\n\nconst documents = summary.documents || [];\nconst guidance = summary.guidance || {};\nconst deadlines = summary.deadlines || [];\n\nconst language = $('Webhook: Send Result Email').item.json.body.language || \"ko\";\n\nconst statusLabel = {\n  completed: \"통과\",\n  missing: \"누락\",\n  invalid: \"불충족\",\n  warning: \"확인필요\",\n  complete: \"완료\",\n  analyzing: \"분석중\"\n};\n\nconst readinessPct = summary.readiness_pct ?? session.readiness_pct ?? 0;\nconst overallStatus = summary.overall_status || session.overall_status || \"확인필요\";\nconst overallStatusLabel = statusLabel[overallStatus] || overallStatus;\n\nconst guideMessages = guidance[language] || guidance.ko || [];\n\n// documents가 비어 있으면 guidance를 서류별 결과처럼 대신 표시\nconst docLines = documents.length > 0\n  ? documents.map(doc => {\n      const label = statusLabel[doc.status] || doc.status;\n      return `- ${doc.doc_type}: ${label}${doc.reason ? ` (${doc.reason})` : \"\"}`;\n    }).join(\"<br>\")\n  : Array.isArray(guideMessages) && guideMessages.length > 0\n    ? guideMessages.map(g => {\n        if (typeof g === \"string\") return `- ${g}`;\n        return `- ${g.doc_type || \"서류\"}: ${g.summary || \"\"}${g.next_action ? `<br>다음 행동: ${g.next_action}` : \"\"}`;\n      }).join(\"<br><br>\")\n    : \"분석된 서류 결과가 없습니다.\";\n\nconst deadlineLines = deadlines.length > 0\n  ? deadlines.map(d => {\n      return `- ${d.task}: ${d.deadline_date || \"기한 없음\"} ${d.label ? `(${d.label})` : \"\"}<br>${d.message || \"\"}`;\n    }).join(\"<br><br>\")\n  : \"등록된 마감/만료 정보가 없습니다.\";\n\nconst guideText = Array.isArray(guideMessages) && guideMessages.length > 0\n  ? guideMessages.map(g => {\n      if (typeof g === \"string\") return `- ${g}`;\n      return `- ${g.summary || \"\"}${g.next_action ? `<br>다음 행동: ${g.next_action}` : \"\"}`.trim();\n    }).join(\"<br><br>\")\n  : \"추가 안내 메시지가 없습니다.\";\n\nconst email = session.email || $('Webhook: Send Result Email').item.json.body.email;\nconst visaType = summary.visa_type || session.visa_type || \"D-2\";\n\nconst body = `\n안녕하세요.<br><br>\n\n요청하신 ${visaType} 비자 서류 분석 결과를 안내드립니다.<br><br>\n\n<b>준비율</b>: ${readinessPct}%<br>\n<b>전체 상태</b>: ${overallStatusLabel}<br><br>\n\n<b>서류별 결과</b><br>\n${docLines}<br><br>\n\n<b>마감/만료 정보</b><br>\n${deadlineLines}<br><br>\n\n<b>안내 메시지</b><br>\n${guideText}<br><br>\n\n감사합니다.<br>\nVistay\n`;\n\nreturn [{\n  json: {\n    session_id: session.session_id,\n    email,\n    subject: `[Vistay] ${visaType} 비자 서류 분석 결과`,\n    body\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        0
+      ],
+      "id": "0695efbc-9049-40ca-9c9f-e16bedeb42b7",
+      "name": "Code: Build Result Email"
+    },
+    {
+      "parameters": {
+        "fromEmail": "kimminseo4216@gmail.com",
+        "toEmail": "={{ $('Code: Build Result Email').item.json.email }}",
+        "subject": "={{ $('Code: Build Result Email').item.json.subject }}",
+        "html": "={{ $('Code: Build Result Email').item.json.body }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        832,
+        0
+      ],
+      "id": "f0ff988d-8986-467e-9b0c-134eda74d717",
+      "name": "Email: Send Result Email",
+      "webhookId": "07d4bd23-a6e1-4b17-8fb9-0066f5486b21",
+      "credentials": {
+        "smtp": {
+          "id": "vJU1jTNUTUazqKKV",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://dtadlofykptnblrmzzad.supabase.co/rest/v1/notification_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "session_id",
+              "value": "={{ $('Code: Build Result Email').item.json.session_id }}"
+            },
+            {
+              "name": "type",
+              "value": "result_email"
+            },
+            {
+              "name": "recipient",
+              "value": "={{ $('Code: Build Result Email').item.json.email }}"
+            },
+            {
+              "name": "status",
+              "value": "sent"
+            },
+            {
+              "name": "sent_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1040,
+        0
+      ],
+      "id": "9a047682-86a0-45e5-a1ce-c00840eb3581",
+      "name": "DB Insert: Result Email Notification",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "5wXo0Mnu6bBc6Xxz",
+          "name": "Supabase Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"success\": true,\n  \"message\": \"분석 결과 이메일을 발송했습니다.\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1248,
+        0
+      ],
+      "id": "9e02110c-23e6-443e-a727-0ee9a2dd560a",
+      "name": "Respond to Webhook"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook: Send Result Email": {
+      "main": [
+        [
+          {
+            "node": "DB Select: ResultReport",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Select: ResultReport": {
+      "main": [
+        [
+          {
+            "node": "DB Select: UserSession",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Select: UserSession": {
+      "main": [
+        [
+          {
+            "node": "Code: Build Result Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build Result Email": {
+      "main": [
+        [
+          {
+            "node": "Email: Send Result Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email: Send Result Email": {
+      "main": [
+        [
+          {
+            "node": "DB Insert: Result Email Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Insert: Result Email Notification": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "b4b10941-3904-401d-8170-98cddea63fc1",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "0fd1ede05e6672c9584a8031df04c1bf559cd3d49ab30052679d90806cb35efd"
+  },
+  "id": "sk4NTZP38GwnmZQt",
+  "tags": []
+}

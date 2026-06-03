@@ -1,0 +1,329 @@
+{
+  "name": "vistay-policy-change-final",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        416,
+        -80
+      ],
+      "id": "0f272dd5-3db5-4a81-9909-371b8320630c",
+      "name": "Trigger: Policy Change"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6dae903f-df11-4bda-ba74-5eae88df2e3a",
+              "name": "visa_type",
+              "value": "D-2",
+              "type": "string"
+            },
+            {
+              "id": "a6076286-f87b-4729-85da-b7ed2c8114af",
+              "name": "changed_field",
+              "value": "min_balance",
+              "type": "string"
+            },
+            {
+              "id": "79c143c1-a4f7-4080-b32d-04d72264d862",
+              "name": "old_min_balance",
+              "value": "12000000",
+              "type": "string"
+            },
+            {
+              "id": "1c37ef17-1f0e-4314-a5d3-d2a59acac248",
+              "name": "new_min_balance",
+              "value": "15000000",
+              "type": "string"
+            },
+            {
+              "id": "6505239a-c5df-4941-b23c-b8100ca7eb5f",
+              "name": "message",
+              "value": "D-2 비자 재정증명 잔액 기준이 1,200만원에서 1,500만원으로 변경되었습니다.",
+              "type": "string"
+            },
+            {
+              "id": "3f6d4f73-45b7-4bd7-b0c0-10872a383fbd",
+              "name": "doc_type",
+              "value": "재정증명",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        624,
+        -80
+      ],
+      "id": "9b0a0971-d298-41fc-ac02-520cd29408d5",
+      "name": "Policy Change Data"
+    },
+    {
+      "parameters": {
+        "url": "=https://dtadlofykptnblrmzzad.supabase.co/rest/v1/user_session?visa_type=eq.{{ $('Policy Change Data').item.json.visa_type }}&select=session_id,user_id,email,visa_type,created_at&order=created_at.desc",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1136,
+        -80
+      ],
+      "id": "3fa660e9-d75a-4e01-9a57-a3762b1cf7df",
+      "name": "DB Select: Affected Users",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "5wXo0Mnu6bBc6Xxz",
+          "name": "Supabase Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://dtadlofykptnblrmzzad.supabase.co/rest/v1/notification_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "session_id",
+              "value": "={{ $json.session_id }}"
+            },
+            {
+              "name": "type",
+              "value": "policy_change"
+            },
+            {
+              "name": "recipient",
+              "value": "={{ $json.email }}"
+            },
+            {
+              "name": "status",
+              "value": "sent"
+            },
+            {
+              "name": "sent_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1552,
+        -80
+      ],
+      "id": "36a56eab-a0d8-4fc4-ae74-d01e636e4529",
+      "name": "DB Insert: Policy Notification",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "5wXo0Mnu6bBc6Xxz",
+          "name": "Supabase Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://dtadlofykptnblrmzzad.supabase.co/rest/v1/visa_requirement?visa_type=eq.{{ $('Policy Change Data').item.json.visa_type }}&doc_type=eq.{{ encodeURIComponent($('Policy Change Data').item.json.doc_type) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "min_balance",
+              "value": "={{ $('Policy Change Data').item.json.new_min_balance }}"
+            },
+            {
+              "name": "description",
+              "value": "={{ $('Policy Change Data').item.json.doc_type }} 최소 잔액 기준 {{ $('Policy Change Data').item.json.new_min_balance }}원 이상"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        848,
+        -80
+      ],
+      "id": "7974ea1d-942d-4af8-b804-61646db9d603",
+      "name": "DB Update: VisaRequirement",
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "5wXo0Mnu6bBc6Xxz",
+          "name": "Supabase Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "kimminseo4216@gmail.com",
+        "toEmail": "={{ $json.recipient }}",
+        "subject": "={{ `[Vistay] ${$('Policy Change Data').item.json.visa_type} 비자 정책 변경 안내` }}",
+        "html": "={{\n`안녕하세요.<br><br>\n\n${$('Policy Change Data').item.json.visa_type} 비자 ${$('Policy Change Data').item.json.doc_type} 기준이 변경되었습니다.<br><br>\n\n기존 기준: ${Number($('Policy Change Data').item.json.old_min_balance).toLocaleString()}원 이상<br>\n변경 기준: ${Number($('Policy Change Data').item.json.new_min_balance).toLocaleString()}원 이상<br><br>\n\n제출하신 서류가 변경된 기준에 영향을 받을 수 있으므로,<br>\n${$('Policy Change Data').item.json.doc_type} 서류를 다시 확인해 주세요.<br><br>\n\n감사합니다.<br>\nVistay`\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1808,
+        -80
+      ],
+      "id": "02cd9543-9ec7-4bd9-966b-6ca6d64a20a2",
+      "name": "Email: Send Policy Change Email",
+      "webhookId": "666e8880-ccd8-40b2-ab13-9c53116cf4b7",
+      "credentials": {
+        "smtp": {
+          "id": "vJU1jTNUTUazqKKV",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst seen = new Set();\nconst result = [];\n\nfor (const item of items) {\n  const email = item.json.email;\n\n  if (!email) continue;\n\n  if (!seen.has(email)) {\n    seen.add(email);\n    result.push(item);\n  }\n}\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        -80
+      ],
+      "id": "23581f22-72d3-4ae9-b09f-77d54042eebd",
+      "name": "Code: Deduplicate Users"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Trigger: Policy Change": {
+      "main": [
+        [
+          {
+            "node": "Policy Change Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Policy Change Data": {
+      "main": [
+        [
+          {
+            "node": "DB Update: VisaRequirement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Select: Affected Users": {
+      "main": [
+        [
+          {
+            "node": "Code: Deduplicate Users",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Update: VisaRequirement": {
+      "main": [
+        [
+          {
+            "node": "DB Select: Affected Users",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Insert: Policy Notification": {
+      "main": [
+        [
+          {
+            "node": "Email: Send Policy Change Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Deduplicate Users": {
+      "main": [
+        [
+          {
+            "node": "DB Insert: Policy Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "b2399715-537a-434b-b7dd-665746e09b15",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "0fd1ede05e6672c9584a8031df04c1bf559cd3d49ab30052679d90806cb35efd"
+  },
+  "id": "cipa1ugU9du742N5",
+  "tags": []
+}
