@@ -2,9 +2,11 @@
 
 D-2(유학) 비자 연장에 필요한 서류를 AI로 자동 검증하는 서비스의 백엔드 워크플로우.
 
-## 데모 영상
+## 데모 
 
-https://youtu.be/pyPAaQwlHhk
+- 데모 영상 : https://youtu.be/pyPAaQwlHhk
+- 실데모 : https://vistay-doc-helper.lovable.app/
+- 데모 테스트용 파일 : https://drive.google.com/drive/folders/1ThJfp2TkcwJ9Q8p5TaeK6KNS1JaEInkf?usp=sharing 
 
 
 ## 구성
